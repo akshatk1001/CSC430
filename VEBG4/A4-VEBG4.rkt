@@ -62,6 +62,9 @@ serialize takes a Value and returns a string representation of that value.
 
 
 (: interp (ExprC Env -> Value))
+#|
+interp takes an ExprC and its Env, and evaluates it to return a Value (the answer)
+|#
 (define (interp [e : ExprC] [env : Env]) : Value
   (match e
     [(numC n) (numV n)]
@@ -94,7 +97,11 @@ serialize takes a Value and returns a string representation of that value.
                      "[ VEBG ] Did not receive a function into appC interp: ~e"
                      fn_val)])]))
 
-
+(: bind_params_to_args ((Listof Symbol) (Listof Value) -> Env))
+#|
+bind_params_to_args takes in a list of params symbols and list of values and
+creates a new Env with the bindings. 
+|#
 (define (bind_params_to_args [params : (Listof Symbol)] [args : (Listof Value)]) : Env
   (match* (params args)
     [('() '()) '()]
@@ -193,6 +200,54 @@ serialize takes a Value and returns a string representation of that value.
 (check-exn
  (regexp
   (regexp-quote
-   "[ VEBG ] Expected boolean in if condition, but got: (numV 3)"))
+   "interp: [ VEBG ] Expected boolean in if condition, but got: (numV 3)"))
  (lambda ()
    (interp (ifC (numC 3) (numC 1) (numC 2)) top-env)))
+
+(check-equal?
+ (interp (appC (lamC '(x) (idC 'x))
+               (list (numC 9)))
+         top-env)
+ (numV 9))
+
+(check-equal?
+ (interp (appC (lamC '(x y) (idC 'y))
+               (list (numC 1) (stringC "hello")))
+         top-env)
+ (stringV "hello"))
+(check-equal?
+
+ (interp (appC (ifC (idC 'true)
+                    (lamC '(x) (idC 'x))
+                    (lamC '(x) (numC 0)))
+               (list (numC 42)))
+         top-env)
+ (numV 42))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "interp: [ VEBG ] Did not receive a function into appC interp: (numV 5)"))
+ (lambda ()
+   (interp (appC (numC 5) (list (numC 1))) top-env)))
+
+
+;-------bind_params_to_args check-------   
+(check-equal?
+ (bind_params_to_args '(x y) (list (numV 1) (stringV "hi")))
+ (list (binding 'x (numV 1))
+       (binding 'y (stringV "hi"))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "bind_params_to_args: [ VEBG ] Number of parameters does not match number of arguments. Params: '(y), Args: '()"))
+ (lambda ()
+   (bind_params_to_args '(x y) (list (numV 1)))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "bind_params_to_args: [ VEBG ] Number of parameters does not match number of arguments. Params: '(), Args: (list (numV 2))"))
+ (lambda ()
+   (bind_params_to_args '(x) (list (numV 1) (numV 2)))))
