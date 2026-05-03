@@ -93,9 +93,17 @@ interp takes an ExprC and its Env, and evaluates it to return a Value (the answe
                          (bind_params_to_args params args_vals)
                          cloV_env)) ;have new bindings on top of the closure env
         (interp body new_env)] 
+       [(primV op arity)
+        (if (equal? (length args_vals) arity)
+            (calc_primV op args_vals)
+            ;; Throw error for incorrect number of PrimV arguments
+            (error 'interp
+                   "[ VEBG ] ~v expected ~e arguments, got ~e"
+                   op arity (length args_vals)))]
        [other (error 'interp
                      "[ VEBG ] Did not receive a function into appC interp: ~e"
                      fn_val)])]))
+
 
 (: bind_params_to_args ((Listof Symbol) (Listof Value) -> Env))
 #|
@@ -112,6 +120,59 @@ creates a new Env with the bindings.
                   params args)]))
 
 
+(: calc_primV (Symbol (Listof Value) -> Value))
+#|
+calc_primV takes in a Symbol representing the operation and a list of Values representing the args, 
+and then performs the operationa and returns a Value. Helper used in interp. 
+|#
+(define (calc_primV [op : Symbol] [args : (Listof Value)]) : Value
+  (match op
+    ['+ (numV (match args
+                [(list (numV n1) (numV n2)) (+ n1 n2)]
+                [other (error 'calc_primV
+                              "[ VEBG ] Expected two numV's for +, but got: ~e"
+                              args)]))]
+    ['- (numV (match args
+                [(list (numV n1) (numV n2)) (- n1 n2)]
+                [other (error 'calc_primV
+                              "[ VEBG ] Expected two numV's for -, but got: ~e"
+                              args)]))]
+    ['* (numV (match args
+                [(list (numV n1) (numV n2)) (* n1 n2)]
+                [other (error 'calc_primV
+                              "[ VEBG ] Expected two numV's for *, but got: ~e"
+                              args)]))]
+    ['/ (numV (match args
+                [(list (numV n1) (numV n2)) (/ n1 n2)]
+                [other (error 'calc_primV
+                              "[ VEBG ] Expected two numV's for /, but got: ~e"
+                              args)]))] 
+    [other (error 'calc_primV
+                  "[ VEBG ] Unknown symbol in calc_primV: ~v"
+                  op)]))
+
+(: parse (Sexp -> ExprC))
+#|
+TODO: ADD COMMENT HERE
+|#
+(define (parse [s : Sexp]) : ExprC
+  (match s
+    [(? real?) (numC s)]
+    [(? string?) (stringC s)]
+    [(? symbol?) (idC s)]
+    [(list 'if cond then else) (ifC (parse cond) (parse then) (parse else))]
+    [(list 'given (list (list (? symbol? params) '= args) ...) 'do body)
+     (appC (lamC (cast params (Listof Symbol)) (parse body))
+           (map parse (cast args (Listof Sexp))))]
+    [(list 'fn (list (? symbol? params) ...) '-> body)
+     (lamC (cast params (Listof Symbol)) (parse body))]
+    [(cons fn-expr arg-exprs)
+     (appC (parse fn-expr)
+           (map parse (cast arg-exprs (Listof Sexp))))]
+    [other (error 'parse
+                  "[ VEBG ] Cannot parse Sexp into ExprC: ~e"
+                  other)]))
+                  
 ;-------CHECKS-------
 
 ;-------lookup check-------
@@ -205,8 +266,8 @@ creates a new Env with the bindings.
    (interp (ifC (numC 3) (numC 1) (numC 2)) top-env)))
 
 (check-equal?
- (interp (appC (lamC '(x) (idC 'x))
-               (list (numC 9)))
+ (interp (appC (lamC '(x) (idC 'x)) 
+               (list (numC 9))) 
          top-env)
  (numV 9))
 
@@ -232,6 +293,29 @@ creates a new Env with the bindings.
    (interp (appC (numC 5) (list (numC 1))) top-env)))
 
 
+(check-equal?
+ (interp (appC (idC '+) (list (numC 1) (numC 2))) top-env)
+ (numV 3))
+
+(check-equal?
+ (interp (appC (idC '-) (list (numC 5) (numC 2))) top-env)
+ (numV 3))
+
+(check-equal?
+ (interp (appC (idC '*) (list (numC 3) (numC 4))) top-env)
+ (numV 12))
+
+(check-equal?
+ (interp (appC (idC '/) (list (numC 8) (numC 2))) top-env)
+ (numV 4))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "interp: [ VEBG ] '+ expected 2 arguments, got 1"))
+ (lambda ()
+   (interp (appC (idC '+) (list (numC 1))) top-env)))
+
 ;-------bind_params_to_args check-------   
 (check-equal?
  (bind_params_to_args '(x y) (list (numV 1) (stringV "hi")))
@@ -251,3 +335,84 @@ creates a new Env with the bindings.
    "bind_params_to_args: [ VEBG ] Number of parameters does not match number of arguments. Params: '(), Args: (list (numV 2))"))
  (lambda ()
    (bind_params_to_args '(x) (list (numV 1) (numV 2)))))
+
+
+;-------calc_primV checks-------
+(check-equal? (calc_primV '+ (list (numV 1) (numV 2))) (numV 3))
+(check-equal? (calc_primV '- (list (numV 5) (numV 2))) (numV 3))
+(check-equal? (calc_primV '* (list (numV 3) (numV 4))) (numV 12))
+(check-equal? (calc_primV '/ (list (numV 8) (numV 2))) (numV 4))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two numV's for +, but got: (list (numV 1) (stringV \"hi\"))"))
+ (lambda ()
+   (calc_primV '+ (list (numV 1) (stringV "hi")))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two numV's for -, but got: (list (numV 1) (stringV \"hi\"))"))
+ (lambda ()
+   (calc_primV '- (list (numV 1) (stringV "hi")))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two numV's for *, but got: (list (numV 1) (stringV \"hi\"))"))
+ (lambda ()
+   (calc_primV '* (list (numV 1) (stringV "hi")))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two numV's for /, but got: (list (numV 1) (stringV \"hi\"))"))
+ (lambda ()
+   (calc_primV '/ (list (numV 1) (stringV "hi")))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Unknown symbol in calc_primV: 'bad-op"))
+ (lambda ()
+   (calc_primV 'bad-op (list (numV 1) (numV 2)))))
+
+
+
+;-------parse checks-------
+(check-equal? (parse 5) (numC 5))
+(check-equal? (parse "hi") (stringC "hi"))
+(check-equal? (parse 'x) (idC 'x))
+(check-equal?
+ (parse '(if true 1 2))
+ (ifC (idC 'true) (numC 1) (numC 2)))
+
+(check-equal?
+ (parse '(fn (x y) -> (+ x y)))
+ (lamC '(x y)
+       (appC (idC '+) (list (idC 'x) (idC 'y)))))
+
+      
+(check-equal?
+ (parse '((fn (z y) -> (+ z y)) (+ 9 14) 98))
+ (appC
+  (lamC '(z y)
+        (appC (idC '+) (list (idC 'z) (idC 'y))))
+  (list
+   (appC (idC '+) (list (numC 9) (numC 14)))
+   (numC 98))))
+
+(check-equal?
+ (parse '(given ([x = 10] [y = 20]) do (+ x y)))
+ (appC
+  (lamC '(x y)
+        (appC (idC '+) (list (idC 'x) (idC 'y))))
+  (list (numC 10) (numC 20))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "parse: [ VEBG ] Cannot parse Sexp into ExprC: '()"))
+ (lambda ()
+   (parse '())))
