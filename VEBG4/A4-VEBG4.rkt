@@ -2,7 +2,7 @@
 (require typed/rackunit)
 
 #|
-TODO: WRITE STATEMTN OF HOW MUCH WE IMPLEMENTED HERE
+Full Project Implemented. Incredible Victory!
 |#
 
 (define-type ExprC (U numC idC stringC ifC lamC appC))
@@ -18,7 +18,7 @@ TODO: WRITE STATEMTN OF HOW MUCH WE IMPLEMENTED HERE
 (struct stringV ([s : String]) #:transparent)
 (struct boolV ([b : Boolean]) #:transparent)
 (struct cloV ([params : (Listof Symbol)] [body : ExprC] [env : Env]) #:transparent)
-(struct primV ([op : Symbol] [arity : Real]) #:transparent) ; DELETE THIS COMMENT LATER: POTENTIALLY CHANGE ARITY TO BE INTEGER
+(struct primV ([op : Symbol] [arity : Real]) #:transparent) 
 
 (define-type Env (Listof binding))
 (struct binding ([sym : Symbol] [val : Value]) #:transparent) 
@@ -29,8 +29,24 @@ TODO: WRITE STATEMTN OF HOW MUCH WE IMPLEMENTED HERE
         (binding '+ (primV '+ 2))
         (binding '- (primV '- 2))
         (binding '* (primV '* 2))
-        (binding '/ (primV '/ 2))))
+        (binding '/ (primV '/ 2))
+        (binding '<= (primV '<= 2))
+        (binding 'equal? (primV 'equal? 2))
+        (binding 'substring (primV 'substring 3))
+        (binding 'strlen (primV 'strlen 1))
+        (binding 'error (primV 'error 1))))
 
+(: reserved-symbol? (Symbol -> Boolean))
+#|
+reserved-symbol? takes a Symbol as the arg and returns if that sybol is reserved or not
+|#
+(define (reserved-symbol? [s : Symbol]) : Boolean
+  (or (symbol=? s 'if)
+      (symbol=? s '=)
+      (symbol=? s 'given)
+      (symbol=? s 'fn)
+      (symbol=? s '->)
+      (symbol=? s 'do)))
 
 
 (: lookup (Symbol Env -> Value))
@@ -146,33 +162,115 @@ and then performs the operationa and returns a Value. Helper used in interp.
                 [(list (numV n1) (numV n2)) (/ n1 n2)]
                 [other (error 'calc_primV
                               "[ VEBG ] Expected two numV's for /, but got: ~e"
-                              args)]))] 
+                              args)]))]
+    ['<= (boolV (match args
+                  [(list (numV n1) (numV n2)) (<= n1 n2)]
+                  [other (error 'calc_primV
+                                "[ VEBG ] Expected two numV's for <=, but got: ~e"
+                                args)]))]
+    ['equal? (boolV (match args
+                      [(list (or (cloV _ _ _) (primV _ _)) (or (cloV _ _ _) (primV _ _))) #f]
+                      [(list _ (or (cloV _ _ _) (primV _ _))) #f]
+                      [(list (or (cloV _ _ _) (primV _ _)) _) #f] 
+                      [(list n1 n2) (equal? n1 n2)]
+                      [other (error 'calc_primV
+                                    "[ VEBG ] Expected two arguments for equal?, but got: ~e"
+                                    args)]))]
+    ['substring (stringV (match args
+                           [(list (stringV s) (numV start) (numV end))
+                            (cond
+                              [(not (exact-nonnegative-integer? start)) ; substring docs say exact nonnegative integer
+                               (error 'calc_primV
+                                      "[ VEBG ] Expected natural number for start index in substring, but got: ~e"
+                                      start)]
+                              [(not (exact-nonnegative-integer? end))
+                               (error 'calc_primV
+                                      "[ VEBG ] Expected natural number for end index in substring, but got: ~e"
+                                      end)]
+                              [(> start end)
+                               (error 'calc_primV
+                                      "[ VEBG ] End index must not be before start index in substring, got start: ~e, end: ~e"
+                                      start end)]
+                              [(> end (string-length s))
+                               (error 'calc_primV
+                                      "[ VEBG ] Substring indexes out of range for string: ~e"
+                                      s)]
+                              [else
+                               (substring s start end)])]
+                           [other (error 'calc_primV
+                                         "[ VEBG ] Expected string and two numbers for substring, but got: ~e"
+                                         args)]))]
+    ['strlen (numV (match args
+                     [(cons (stringV s) '()) (string-length s)]
+                     [other (error 'calc_primV
+                                   "[ VEBG ] Expected a string for strlen, but got: ~e"
+                                   args)]))]
+    ['error (match args
+              [(list v)
+               (error 'user-error
+                      "[ VEBG ] user-error: ~a"
+                      (serialize v))]
+              [other
+               (error 'calc_primV
+                      "[ VEBG ] Expected one argument for error, but got: ~e"
+                      args)])]
+
     [other (error 'calc_primV
                   "[ VEBG ] Unknown symbol in calc_primV: ~v"
                   op)]))
 
+
 (: parse (Sexp -> ExprC))
 #|
-TODO: ADD COMMENT HERE
+Parse takes in an S-expression and converts it into an ExprC to be interpreted.
 |#
 (define (parse [s : Sexp]) : ExprC
   (match s
     [(? real?) (numC s)]
     [(? string?) (stringC s)]
-    [(? symbol?) (idC s)]
+    [(? symbol?) 
+     (if (reserved-symbol? s)
+         (error 'parse "[ VEBG ] Used reserved symbol: ~e" 
+                s)
+         (idC s))]
     [(list 'if cond then else) (ifC (parse cond) (parse then) (parse else))]
     [(list 'given (list (list (? symbol? params) '= args) ...) 'do body)
-     (appC (lamC (cast params (Listof Symbol)) (parse body))
-           (map parse (cast args (Listof Sexp))))]
+     (define params-list (cast params (Listof Symbol)))
+     (cond
+       [(check-duplicates params-list)
+        (error 'parse "[ VEBG ] duplicate given names: ~e" params-list)]
+       [(ormap reserved-symbol? params-list)
+        (error 'parse "[ VEBG ] reserved symbol used as given name: ~e" params-list)]
+       [else
+        (appC (lamC params-list (parse body))
+              (map parse (cast args (Listof Sexp))))])]
     [(list 'fn (list (? symbol? params) ...) '-> body)
-     (lamC (cast params (Listof Symbol)) (parse body))]
+     (define params-list (cast params (Listof Symbol)))
+     (cond 
+       [(check-duplicates params-list) (error 'parse 
+                                              "[ VEBG ] Duplicate parameter names in definition: ~e" 
+                                              params-list)]
+       [(ormap reserved-symbol? params-list) (error 'parse 
+                                                    "[ VEBG ] reserved symbol used as parameter: ~e" 
+                                                    params-list)]
+       [else (lamC params-list (parse body))])]
     [(cons fn-expr arg-exprs)
      (appC (parse fn-expr)
            (map parse (cast arg-exprs (Listof Sexp))))]
     [other (error 'parse
                   "[ VEBG ] Cannot parse Sexp into ExprC: ~e"
                   other)]))
-                  
+
+
+(: top-interp (Sexp -> String))
+#|
+top-interp takes in an S-expression, parses it into an ExprC, evaluates it to a Value, and then
+serializes that value into a string
+|#
+(define (top-interp [s : Sexp]) : String
+  (serialize (interp (parse s) top-env)))
+
+
 ;-------CHECKS-------
 
 ;-------lookup check-------
@@ -416,3 +514,148 @@ TODO: ADD COMMENT HERE
    "parse: [ VEBG ] Cannot parse Sexp into ExprC: '()"))
  (lambda ()
    (parse '())))
+
+
+;-------top-interp checks-------
+(check-equal? (top-interp 5) "5")
+(check-equal? (top-interp "hi") "\"hi\"")
+(check-equal? (top-interp 'true) "true")
+(check-equal? (top-interp '(+ 1 2)) "3")
+(check-equal?
+ (top-interp '((fn (x) -> x) 9))
+ "9")
+
+(check-equal?
+ (top-interp '(given ([x = 10] [y = 20]) do (+ x y)))
+ "30")
+
+(check-equal?
+ (top-interp '((fn (z y) -> (+ z y)) (+ 9 14) 98))
+ "121")
+
+(check-equal? (top-interp '(<= 1 2)) "true")
+(check-equal? (top-interp '(<= 5 2)) "false")
+(check-equal? (top-interp '(equal? 3 3)) "true")
+(check-equal? (top-interp '(equal? 3 4)) "false")
+(check-equal? (top-interp '(strlen "hello")) "5")
+(check-equal? (top-interp '(substring "hello" 1 4)) "\"ell\"")
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "user-error: [ VEBG ] user-error: \"boom\""))
+ (lambda ()
+   (top-interp '(error "boom"))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected one argument for error, but got: '()"))
+ (lambda ()
+   (calc_primV 'error '())))
+
+
+;-------new calc_primV checks-------
+(check-equal? (calc_primV '<= (list (numV 1) (numV 2))) (boolV #t))
+(check-equal? (calc_primV '<= (list (numV 5) (numV 2))) (boolV #f))
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two numV's for <=, but got: (list (numV 1) (stringV \"hi\"))"))
+ (lambda ()
+   (calc_primV '<= (list (numV 1) (stringV "hi")))))
+
+(check-equal? (calc_primV 'equal? (list (numV 3) (numV 3))) (boolV #t))
+(check-equal? (calc_primV 'equal? (list (numV 3) (numV 4))) (boolV #f))
+(check-equal? (calc_primV 'equal? (list (stringV "hi") (stringV "hi"))) (boolV #t))
+(check-equal? (calc_primV 'equal? (list (boolV #t) (boolV #t))) (boolV #t))
+(check-equal? (calc_primV 'equal? (list (boolV #t) (boolV #f))) (boolV #f))
+(check-equal? (calc_primV 'equal? (list (numV 1) (stringV "1"))) (boolV #f))
+(check-equal? (calc_primV 'equal? (list (primV '+ 2) (primV '+ 2))) (boolV #f))
+(check-equal? (calc_primV 'equal? (list (cloV '(x) (idC 'x) '()) (numV 1))) (boolV #f))
+(check-equal? (calc_primV 'equal? (list (numV 1) (cloV '(x) (idC 'x) '()))) (boolV #f))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected two arguments for equal?, but got: (list (numV 1))"))
+ (lambda ()
+   (calc_primV 'equal? (list (numV 1)))))
+
+(check-equal?
+ (calc_primV 'substring (list (stringV "hello") (numV 1) (numV 4)))
+ (stringV "ell"))
+
+(check-equal?
+ (calc_primV 'substring (list (stringV "hello") (numV 2) (numV 2)))
+ (stringV ""))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected string and two numbers for substring, but got: (list (numV 1) (numV 0) (numV 1))"))
+ (lambda ()
+   (calc_primV 'substring (list (numV 1) (numV 0) (numV 1)))))
+
+(check-equal?
+ (calc_primV 'strlen (list (stringV "hello")))
+ (numV 5))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected a string for strlen, but got: (list (numV 5))"))
+ (lambda ()
+   (calc_primV 'strlen (list (numV 5)))))
+
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected natural number for start index in substring, but got: -1"))
+ (lambda ()
+   (calc_primV 'substring (list (stringV "hello") (numV -1) (numV 3)))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Expected natural number for end index in substring, but got: 2.5"))
+ (lambda ()
+   (calc_primV 'substring (list (stringV "hello") (numV 1) (numV 2.5)))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] End index must not be before start index in substring, got start: 4, end: 2"))
+ (lambda ()
+   (calc_primV 'substring (list (stringV "hello") (numV 4) (numV 2)))))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Substring indexes out of range for string: \"hi\""))
+ (lambda ()
+   (calc_primV 'substring (list (stringV "hi") (numV 0) (numV 5)))))
+
+
+;-------new parser error checks-------
+(check-exn
+ (regexp (regexp-quote "parse: [ VEBG ] Used reserved symbol: 'if"))
+ (lambda () (parse 'if)))
+
+(check-exn
+ (regexp (regexp-quote "parse: [ VEBG ] Duplicate parameter names in definition: '(x x)"))
+ (lambda () (parse '(fn (x x) -> x))))
+
+(check-exn
+ (regexp (regexp-quote "parse: [ VEBG ] reserved symbol used as parameter: '(if)"))
+ (lambda () (parse '(fn (if) -> 1))))
+
+(check-exn
+ (regexp (regexp-quote "parse: [ VEBG ] duplicate given names: '(x x)"))
+ (lambda () (parse '(given ([x = 1] [x = 2]) do x))))
+
+(check-exn
+ (regexp (regexp-quote "parse: [ VEBG ] reserved symbol used as given name: '(if)"))
+ (lambda () (parse '(given ([if = 1]) do if))))
+
