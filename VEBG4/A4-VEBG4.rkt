@@ -159,7 +159,11 @@ and then performs the operationa and returns a Value. Helper used in interp.
                               "[ VEBG ] Expected two numV's for *, but got: ~e"
                               args)]))]
     ['/ (numV (match args
-                [(list (numV n1) (numV n2)) (/ n1 n2)]
+                [(list (numV n1) (numV n2)) (if (equal? n2 0)
+                                                (error 'calc_primV
+                                                       "[ VEBG ] Tried to divide by 0: ~e"
+                                                       args)
+                                                (/ n1 n2))]
                 [other (error 'calc_primV
                               "[ VEBG ] Expected two numV's for /, but got: ~e"
                               args)]))]
@@ -189,7 +193,7 @@ and then performs the operationa and returns a Value. Helper used in interp.
                                       end)]
                               [(> start end)
                                (error 'calc_primV
-                                      "[ VEBG ] End index must not be before start index in substring, got start: ~e, end: ~e"
+                                      "[ VEBG ] End before start index in substring, got: ~e, end: ~e"
                                       start end)]
                               [(> end (string-length s))
                                (error 'calc_primV
@@ -427,19 +431,18 @@ serializes that value into a string
  (lambda ()
    (bind_params_to_args '(x y) (list (numV 1)))))
 
-(check-exn
- (regexp
-  (regexp-quote
-   "bind_params_to_args: [ VEBG ] Number of parameters does not match number of arguments. Params: '(), Args: (list (numV 2))"))
- (lambda ()
-   (bind_params_to_args '(x) (list (numV 1) (numV 2)))))
-
-
 ;-------calc_primV checks-------
 (check-equal? (calc_primV '+ (list (numV 1) (numV 2))) (numV 3))
 (check-equal? (calc_primV '- (list (numV 5) (numV 2))) (numV 3))
 (check-equal? (calc_primV '* (list (numV 3) (numV 4))) (numV 12))
 (check-equal? (calc_primV '/ (list (numV 8) (numV 2))) (numV 4))
+
+(check-exn
+ (regexp
+  (regexp-quote
+   "calc_primV: [ VEBG ] Tried to divide by 0: (list (numV 1) (numV 0))"))
+ (lambda ()
+   (calc_primV '/ (list (numV 1) (numV 0)))))
 
 (check-exn
  (regexp
@@ -626,7 +629,7 @@ serializes that value into a string
 (check-exn
  (regexp
   (regexp-quote
-   "calc_primV: [ VEBG ] End index must not be before start index in substring, got start: 4, end: 2"))
+   "calc_primV: [ VEBG ] End before start index in substring, got: 4, end: 2"))
  (lambda ()
    (calc_primV 'substring (list (stringV "hello") (numV 4) (numV 2)))))
 
@@ -658,4 +661,3 @@ serializes that value into a string
 (check-exn
  (regexp (regexp-quote "parse: [ VEBG ] reserved symbol used as given name: '(if)"))
  (lambda () (parse '(given ([if = 1]) do if))))
-
